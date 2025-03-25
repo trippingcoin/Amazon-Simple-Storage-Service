@@ -1,8 +1,12 @@
 package utils
 
 import (
+	"A3S/internal/models"
+	"encoding/xml"
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 )
 
@@ -54,4 +58,23 @@ func Checkflag() {
 		fmt.Println("Port should be 1024-49151")
 		os.Exit(1)
 	}
+}
+
+func WriteXMLError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(code)
+
+	xmlResponse := models.XMLErrorResponse{
+		Message: message,
+		Code:    code,
+	}
+
+	xmlData, err := xml.MarshalIndent(xmlResponse, "", "  ")
+	if err != nil {
+		log.Printf("Error generating XML response: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Write(xmlData)
 }
