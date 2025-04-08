@@ -1,7 +1,9 @@
 package main
 
 import (
-	root "A3S/internal/handlers/rootHandler"
+	bucketHandl "A3S/internal/handlers/bucketHandler"
+	objectHandl "A3S/internal/handlers/objectHandler"
+	rootHandl "A3S/internal/handlers/rootHandler"
 	"A3S/internal/models"
 	"A3S/internal/utils"
 	"fmt"
@@ -16,7 +18,11 @@ func main() {
 	system := &models.Storage{}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", root.CreateRootHandler(system))
+	mux.HandleFunc("/", rootHandl.CreateRootHandler(system))
+	mux.HandleFunc("/{bucket}", bucketHandl.CreateBucketHandler(system))
+	mux.HandleFunc("/{bucket}/", bucketHandl.CreateBucketHandler(system))
+	mux.HandleFunc("/{bucket}/{object}", objectHandl.CreateObjectHandler(system))
+	mux.HandleFunc("/{bucket}/{object}/", objectHandl.CreateObjectHandler(system))
 
 	s := http.Server{
 		Addr:    ":" + strconv.Itoa(*utils.Port),

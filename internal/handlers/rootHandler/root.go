@@ -1,4 +1,4 @@
-package root
+package rootHandl
 
 import (
 	"A3S/internal/models"
