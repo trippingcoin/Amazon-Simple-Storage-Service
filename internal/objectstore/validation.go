@@ -15,7 +15,7 @@ var (
 	ErrExists   = errors.New("bucket already exists")
 	ErrNotEmpty = errors.New("bucket is not empty or has active uploads")
 	ErrTooLarge = errors.New("object exceeds size limit")
-	ErrBusy     = errors.New("upload capacity exhausted")
+	ErrBusy     = errors.New("storage operation capacity exhausted")
 	ErrClosed   = errors.New("storage is closed")
 )
 var bucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
@@ -54,10 +54,12 @@ func (id ObjectID) Validate() error {
 type Limits struct {
 	MaxObjectBytes       int64
 	MaxConcurrentUploads int
+	// Zero retains the default of 16 concurrent downloads.
+	MaxConcurrentDownloads int
 }
 
 func (l Limits) Validate() error {
-	if l.MaxObjectBytes <= 0 || l.MaxObjectBytes > 1<<40 || l.MaxConcurrentUploads <= 0 || l.MaxConcurrentUploads > 1024 {
+	if l.MaxConcurrentDownloads < 0 || l.MaxConcurrentDownloads > 1024 || l.MaxObjectBytes <= 0 || l.MaxObjectBytes > 1<<40 || l.MaxConcurrentUploads <= 0 || l.MaxConcurrentUploads > 1024 {
 		return errors.New("invalid upload limits")
 	}
 	return nil

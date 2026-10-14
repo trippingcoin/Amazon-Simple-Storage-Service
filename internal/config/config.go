@@ -28,6 +28,7 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	flags.StringVar(&c.Host, "host", "127.0.0.1", "Listen IP address")
 	flags.IntVar(&c.Port, "port", 8080, "Listen port")
 	flags.Int64Var(&c.Limits.MaxObjectBytes, "max-object-bytes", 64<<20, "Maximum object size in bytes")
+	flags.IntVar(&c.Limits.MaxConcurrentDownloads, "max-downloads", 16, "Maximum simultaneous downloads")
 	flags.IntVar(&c.Limits.MaxConcurrentUploads, "max-uploads", 8, "Maximum simultaneous uploads")
 	flags.DurationVar(&c.RequestTimeout, "request-timeout", 2*time.Minute, "Maximum request duration")
 	flags.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", 30*time.Second, "Graceful shutdown deadline")

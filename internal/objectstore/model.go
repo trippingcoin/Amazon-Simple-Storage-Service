@@ -2,7 +2,10 @@
 // depending on HTTP, serialization formats or a filesystem implementation.
 package objectstore
 
-import "time"
+import (
+	"io"
+	"time"
+)
 
 // BucketID is the logical bucket name, not a directory path.
 type BucketID string
@@ -21,7 +24,20 @@ type Bucket struct {
 	LastModified time.Time
 	Empty        bool
 }
+type ReadSeekCloser interface {
+	io.Reader
+	io.Seeker
+	io.Closer
+}
+
+// Download pins one immutable object version. The caller must close Content.
+type Download struct {
+	Object  Object
+	Content ReadSeekCloser
+}
+
 type Object struct {
+	SHA256       string
 	ID           ObjectID
 	Size         int64
 	ContentType  string

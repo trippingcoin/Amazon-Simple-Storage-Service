@@ -32,13 +32,17 @@ func objectHandler(s Operations, maxObjectBytes int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bucket, key := r.PathValue("bucket"), r.PathValue("object")
 		switch r.Method {
-		case http.MethodGet:
+		case http.MethodGet, http.MethodHead:
+			if r.URL.Query().Get("metadata") != "1" {
+				serveDownload(w, r, s, bucket, key)
+				return
+			}
 			object, err := s.GetObject(r.Context(), bucket, key)
 			if err != nil {
 				writeStorageError(w, err)
 				return
 			}
-			// Keep the existing metadata GET contract; streaming download is Phase 3.
+			// Preserve the existing metadata representation.
 			writeXML(w, http.StatusOK, toObjectResponse(object))
 		case http.MethodPut:
 			if r.ContentLength > maxObjectBytes {
@@ -59,7 +63,7 @@ func objectHandler(s Operations, maxObjectBytes int64) http.HandlerFunc {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			w.Header().Set("Allow", "GET, PUT, DELETE")
+			w.Header().Set("Allow", "GET, HEAD, PUT, DELETE")
 			writeXMLError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	}

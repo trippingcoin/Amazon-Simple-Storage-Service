@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 )
 
 func writeXML(w http.ResponseWriter, status int, value any) {
@@ -19,6 +20,7 @@ func writeXML(w http.ResponseWriter, status int, value any) {
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(status)
 	if _, err = w.Write(data); err != nil {
 		log.Print("HTTP response write failed")
@@ -50,7 +52,7 @@ func writeStorageError(w http.ResponseWriter, err error) {
 		message = "Object exceeds size limit"
 	case errors.Is(err, objectstore.ErrBusy):
 		status = http.StatusServiceUnavailable
-		message = "Upload capacity exhausted"
+		message = "Storage operation capacity exhausted"
 		w.Header().Set("Retry-After", "1")
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), errors.Is(err, io.ErrUnexpectedEOF):
 		status = http.StatusRequestTimeout

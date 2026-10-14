@@ -3,6 +3,8 @@ package storage
 import (
 	"A3S/internal/objectstore"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
@@ -131,7 +133,8 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 		return err
 	}
 	defer func() { f.Close(); s.cleanup(stage) }()
-	n, err := io.Copy(f, io.LimitReader(contextReader{ctx, body}, s.maxBytes+1))
+	hash := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(contextReader{ctx, body}, s.maxBytes+1))
 	if err != nil {
 		return err
 	}
@@ -191,7 +194,7 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 	}
 	// Rename is the commit point. A later directory-sync failure is an uncertain
 	// durability result, not permission to roll back an already visible object.
-	b.objects[key] = objectstore.Object{ID: id, Size: info.Size(), ContentType: contentType, LastModified: info.ModTime().UTC()}
+	b.objects[key] = objectstore.Object{SHA256: hex.EncodeToString(hash.Sum(nil)), ID: id, Size: info.Size(), ContentType: contentType, LastModified: info.ModTime().UTC()}
 	b.meta.LastModified = time.Now().UTC()
 	return errors.Join(s.syncDir(bucket), s.syncDir(privateDir))
 }

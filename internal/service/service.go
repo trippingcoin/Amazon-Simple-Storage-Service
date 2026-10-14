@@ -16,6 +16,7 @@ type Repository interface {
 	ListBuckets(context.Context) ([]objectstore.Bucket, error)
 	CreateBucket(context.Context, objectstore.BucketID) error
 	DeleteBucket(context.Context, objectstore.BucketID) error
+	OpenObject(context.Context, objectstore.ObjectID) (objectstore.Download, error)
 	GetObject(context.Context, objectstore.ObjectID) (objectstore.Object, error)
 	PutObject(context.Context, objectstore.ObjectID, io.Reader) error
 	DeleteObject(context.Context, objectstore.ObjectID) error
@@ -102,4 +103,20 @@ func (s *Service) DeleteObject(ctx context.Context, bucket, key string) error {
 		return fmt.Errorf("delete object: %w", err)
 	}
 	return nil
+}
+
+// OpenObject returns a pinned stream; ownership of Content passes to the caller.
+func (s *Service) OpenObject(ctx context.Context, bucket, key string) (objectstore.Download, error) {
+	id := objectstore.ObjectID{Bucket: objectstore.BucketID(bucket), Key: objectstore.ObjectKey(key)}
+	if err := id.Validate(); err != nil {
+		return objectstore.Download{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return objectstore.Download{}, err
+	}
+	result, err := s.repo.OpenObject(ctx, id)
+	if err != nil {
+		return objectstore.Download{}, fmt.Errorf("open object: %w", err)
+	}
+	return result, nil
 }

@@ -19,6 +19,7 @@ type Operations interface {
 	ListBuckets(context.Context) ([]objectstore.Bucket, error)
 	CreateBucket(context.Context, string) error
 	DeleteBucket(context.Context, string) error
+	OpenObject(context.Context, string, string) (objectstore.Download, error)
 	GetObject(context.Context, string, string) (objectstore.Object, error)
 	PutObject(context.Context, string, string, io.Reader) error
 	DeleteObject(context.Context, string, string) error
@@ -55,6 +56,9 @@ func New(s Operations, opts Options) (http.Handler, error) {
 	})
 	expected := sha256.Sum256([]byte(token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w = headWriter{w}
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		auth := r.Header.Get("Authorization")
 		supplied := sha256.Sum256([]byte(strings.TrimPrefix(auth, "Bearer ")))
