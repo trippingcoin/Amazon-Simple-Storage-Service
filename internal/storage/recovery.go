@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -149,12 +149,12 @@ func (s *Store) legacyCreationTimes() map[string]time.Time {
 		return result
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
-		log.Print("legacy bucket timestamps ignored: invalid metadata file")
+		slog.Warn("legacy bucket timestamps ignored: invalid metadata file")
 		return result
 	}
 	f, err := s.root.Open("BucketMetaData.csv")
 	if err != nil {
-		log.Print("legacy bucket timestamps unavailable")
+		slog.Warn("legacy bucket timestamps unavailable")
 		return result
 	}
 	defer f.Close()
@@ -166,7 +166,7 @@ func (s *Store) legacyCreationTimes() map[string]time.Time {
 			break
 		}
 		if err != nil {
-			log.Print("legacy bucket timestamps ignored: malformed CSV")
+			slog.Warn("legacy bucket timestamps ignored: malformed CSV")
 			return make(map[string]time.Time)
 		}
 		if objectstore.BucketID(row[0]).Validate() != nil {

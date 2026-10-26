@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -144,7 +144,7 @@ func (s *Store) syncDir(name string) error {
 }
 func (s *Store) cleanup(name string) {
 	if err := s.root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		log.Printf("Temporary storage cleanup failed: %v", err)
+		slog.Error("temporary_cleanup_failed")
 	}
 }
 

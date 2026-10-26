@@ -6,7 +6,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -22,9 +21,7 @@ func writeXML(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(status)
-	if _, err = w.Write(data); err != nil {
-		log.Print("HTTP response write failed")
-	}
+	_, _ = w.Write(data) // Request middleware records write failures.
 }
 func writeXMLError(w http.ResponseWriter, message string, status int) {
 	writeXML(w, status, ErrorResponse{Message: message, Code: status})
@@ -61,8 +58,6 @@ func writeStorageError(w http.ResponseWriter, err error) {
 		status = http.StatusRequestTimeout
 		message = "Request timed out"
 	}
-	if status == http.StatusInternalServerError {
-		log.Printf("Storage operation failed: %v", err)
-	}
+	// The request event records status and ID without exposing backend error text.
 	writeXMLError(w, message, status)
 }

@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -43,12 +44,22 @@ func (h *trackedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 func (h *trackedHandler) wait() { h.mu.Lock(); h.closed = true; h.mu.Unlock(); h.wg.Wait() }
 
+// Transport errors can contain peer-controlled text; keep the event structured
+// without writing the raw net/http message or panic payload.
+type transportLogWriter struct{}
+
+func (transportLogWriter) Write(p []byte) (int, error) {
+	slog.Error("http_transport_error")
+	return len(p), nil
+}
+
 func run(c config.Config) error {
 	store, err := storage.Open(c.DataDir, c.Limits)
 	if err != nil {
 		return fmt.Errorf("open storage: %w", err)
 	}
 	defer store.Close()
+	defer slog.Info("server_stopped")
 	base, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	api, err := httpapi.New(service.New(store), httpapi.Options{Token: c.Token, RequestTimeout: c.RequestTimeout, MaxObjectBytes: c.Limits.MaxObjectBytes})
@@ -56,7 +67,7 @@ func run(c config.Config) error {
 		return err
 	}
 	handler := &trackedHandler{next: api}
-	server := &http.Server{Addr: net.JoinHostPort(c.Host, strconv.Itoa(c.Port)), Handler: handler,
+	server := &http.Server{Addr: net.JoinHostPort(c.Host, strconv.Itoa(c.Port)), Handler: handler, ErrorLog: log.New(transportLogWriter{}, "", 0),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: c.RequestTimeout, WriteTimeout: c.RequestTimeout + 10*time.Second,
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return base }}
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -69,7 +80,7 @@ func run(c config.Config) error {
 			result <- server.ListenAndServe()
 		}
 	}()
-	log.Printf("Starting storage server on %s", server.Addr)
+	slog.Info("server_starting", "address", server.Addr)
 	select {
 	case err = <-result:
 		cancel()
@@ -85,7 +96,7 @@ func run(c config.Config) error {
 		err = server.Shutdown(ctx)
 		cancel()
 		if err != nil {
-			log.Print("Graceful shutdown deadline reached; interrupting active requests")
+			slog.Warn("shutdown_deadline_reached")
 			server.Close()
 		}
 		handler.wait()
@@ -97,16 +108,20 @@ func run(c config.Config) error {
 	}
 }
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	c, err := config.Parse(os.Args[1:], os.Getenv("TRIPLE_S_TOKEN"), os.Stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return
 	}
 	if err != nil {
-		log.Print(err)
+		slog.Error("configuration_invalid")
 		os.Exit(1)
 	}
+	var level slog.Level
+	_ = level.UnmarshalText([]byte(c.LogLevel)) // Validated by config.Parse.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	if err = run(c); err != nil {
-		log.Print(err)
+		slog.Error("server_failed")
 		os.Exit(1)
 	}
 }

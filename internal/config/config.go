@@ -14,6 +14,7 @@ import (
 
 type Config struct {
 	DataDir, Host, Token, TLSCert, TLSKey string
+	LogLevel                              string
 	Port                                  int
 	Limits                                objectstore.Limits
 	RequestTimeout, ShutdownTimeout       time.Duration
@@ -25,6 +26,7 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	flags := flag.NewFlagSet("triple-s", flag.ContinueOnError)
 	flags.SetOutput(out)
 	flags.StringVar(&c.DataDir, "dir", "data", "Storage directory (single process, local filesystem)")
+	flags.StringVar(&c.LogLevel, "log-level", "info", "JSON log level: debug, info, warn, error")
 	flags.StringVar(&c.Host, "host", "127.0.0.1", "Listen IP address")
 	flags.IntVar(&c.Port, "port", 8080, "Listen port")
 	flags.Int64Var(&c.Limits.MaxObjectBytes, "max-object-bytes", 64<<20, "Maximum object size in bytes")
@@ -37,6 +39,11 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	flags.BoolVar(&c.AllowInsecureHTTP, "allow-insecure-http", false, "Allow non-loopback HTTP only behind a trusted TLS proxy")
 	if err := flags.Parse(args); err != nil {
 		return c, err
+	}
+	switch c.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return c, errors.New("invalid log level")
 	}
 	if flags.NArg() != 0 {
 		return c, errors.New("unexpected positional arguments")

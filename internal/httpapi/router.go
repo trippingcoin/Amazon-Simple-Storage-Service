@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ type Operations interface {
 	DeleteObject(context.Context, string, string) error
 }
 type Options struct {
+	Logger         *slog.Logger
 	Token          string
 	RequestTimeout time.Duration
 	MaxObjectBytes int64
@@ -45,7 +47,13 @@ func New(s Operations, opts Options) (http.Handler, error) {
 		return nil, err
 	}
 	token, timeout := opts.Token, opts.RequestTimeout
+	metrics := newTelemetry()
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/-/metrics", metrics.serve)
 	mux.HandleFunc("/{$}", rootHandler(s))
 	mux.HandleFunc("/{bucket}", bucketHandler(s))
 	mux.HandleFunc("/{bucket}/{$}", bucketHandler(s))
@@ -55,7 +63,7 @@ func New(s Operations, opts Options) (http.Handler, error) {
 		writeXMLError(w, "Unsupported object path", http.StatusBadRequest)
 	})
 	expected := sha256.Sum256([]byte(token))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return metrics.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			w = headWriter{w}
 		}
@@ -70,5 +78,5 @@ func New(s Operations, opts Options) (http.Handler, error) {
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
-	}), nil
+	}), logger), nil
 }
