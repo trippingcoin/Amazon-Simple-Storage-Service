@@ -21,7 +21,7 @@ import (
 const privateDir = ".triple-s"
 const bucketInfo = ".bucket.json"
 
-var temporaryPattern = regexp.MustCompile(`^(upload|bucket|metadata)-[0-9a-f]{32}$`)
+var temporaryPattern = regexp.MustCompile(`^(upload|bucket|metadata|transaction)-[0-9a-f]{32}$`)
 
 type Options = objectstore.Limits
 
@@ -41,9 +41,12 @@ type Store struct {
 	maxStorageBytes, maxObjects int64
 	storedBytes, objectCount    int64
 	closed                      bool
+	recoveryRequired            bool
 	// Injected only by package tests to exercise publication failures.
-	rename         func(string, string) error
-	metadataRename func(string, string) error
+	rename          func(string, string) error
+	metadataRename  func(string, string) error
+	journalRename   func(string, string) error
+	transactionHook func(string)
 }
 
 func Open(dir string, opts Options) (*Store, error) {
@@ -74,7 +77,7 @@ func Open(dir string, opts Options) (*Store, error) {
 	if downloads == 0 {
 		downloads = 16
 	}
-	s := &Store{maxStorageBytes: opts.MaxStorageBytes, maxObjects: opts.MaxObjects, downloads: make(chan struct{}, downloads), root: root, buckets: make(map[string]*bucketState), slots: make(chan struct{}, opts.MaxConcurrentUploads), maxBytes: opts.MaxObjectBytes, rename: root.Rename, metadataRename: root.Rename}
+	s := &Store{maxStorageBytes: opts.MaxStorageBytes, maxObjects: opts.MaxObjects, downloads: make(chan struct{}, downloads), root: root, buckets: make(map[string]*bucketState), slots: make(chan struct{}, opts.MaxConcurrentUploads), maxBytes: opts.MaxObjectBytes, rename: root.Rename, metadataRename: root.Rename, journalRename: root.Rename}
 	ok := false
 	defer func() {
 		if !ok {
@@ -104,6 +107,12 @@ func Open(dir string, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("exclusive storage lock: %w", err)
 	}
 	if err = s.prepareObjectMetadata(); err != nil {
+		return nil, err
+	}
+	if err = s.prepareTransactions(); err != nil {
+		return nil, err
+	}
+	if err = s.replayTransactions(); err != nil {
 		return nil, err
 	}
 	if err = s.recover(); err != nil {
@@ -165,8 +174,8 @@ func nonce() (string, error) {
 func (s *Store) ListBuckets(ctx context.Context) ([]objectstore.Bucket, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.closed {
-		return nil, objectstore.ErrClosed
+	if err := s.stateError(); err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

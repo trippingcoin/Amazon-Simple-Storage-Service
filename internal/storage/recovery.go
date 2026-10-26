@@ -22,14 +22,14 @@ func (s *Store) recover() error {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "lock" || name == "metadata" {
+		if name == "lock" || name == "metadata" || name == "transactions" {
 			continue
 		}
 		if !temporaryPattern.MatchString(name) {
 			return fmt.Errorf("unexpected file in private storage: %q", name)
 		}
 		path := privateDir + "/" + name
-		if strings.HasPrefix(name, "upload-") || strings.HasPrefix(name, "metadata-") {
+		if strings.HasPrefix(name, "upload-") || strings.HasPrefix(name, "metadata-") || strings.HasPrefix(name, "transaction-") {
 			if !entry.Type().IsRegular() {
 				return fmt.Errorf("unsafe temporary upload: %q", name)
 			}

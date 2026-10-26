@@ -22,9 +22,9 @@ func (s *Store) OpenObject(ctx context.Context, id objectstore.ObjectID) (object
 		return out, err
 	}
 	s.mu.RLock()
-	if s.closed {
+	if err := s.stateError(); err != nil {
 		s.mu.RUnlock()
-		return out, objectstore.ErrClosed
+		return out, err
 	}
 	select {
 	case s.downloads <- struct{}{}:

@@ -20,8 +20,8 @@ func (s *Store) GetObject(ctx context.Context, id objectstore.ObjectID) (objects
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.closed {
-		return objectstore.Object{}, objectstore.ErrClosed
+	if err := s.stateError(); err != nil {
+		return objectstore.Object{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return objectstore.Object{}, err
@@ -43,8 +43,8 @@ func (s *Store) DeleteObject(ctx context.Context, id objectstore.ObjectID) error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
-		return objectstore.ErrClosed
+	if err := s.stateError(); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -59,14 +59,31 @@ func (s *Store) DeleteObject(ctx context.Context, id objectstore.ObjectID) error
 	if err := s.regularObject(bucket, key); err != nil {
 		return err
 	}
-	if err := s.root.Remove(bucket + "/" + key); err != nil {
+	randomID, err := nonce()
+	if err != nil {
 		return err
+	}
+	tx := objectTransaction{Version: 1, ID: randomID, Action: "delete", Object: b.objects[key]}
+	s.recoveryRequired = true
+	decided, err := s.beginTransaction(ctx, tx)
+	if !decided {
+		s.recoveryRequired = false
+	}
+	if err != nil {
+		if decided {
+			return errors.Join(objectstore.ErrRecoveryRequired, err)
+		}
+		return err
+	}
+	if _, err = s.completeTransaction(tx, false); err != nil {
+		return errors.Join(objectstore.ErrRecoveryRequired, err)
 	}
 	s.storedBytes -= b.objects[key].Size
 	s.objectCount--
 	delete(b.objects, key)
 	b.meta.LastModified = time.Now().UTC()
-	return errors.Join(s.syncDir(bucket), s.removeObjectMetadata(id))
+	s.recoveryRequired = false
+	return nil
 }
 func (s *Store) regularObject(bucket, key string) error {
 	info, err := s.root.Lstat(bucket)
@@ -113,9 +130,9 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 		return objectstore.ErrBusy
 	}
 	s.mu.Lock()
-	if s.closed {
+	if err := s.stateError(); err != nil {
 		s.mu.Unlock()
-		return objectstore.ErrClosed
+		return err
 	}
 	b, ok := s.buckets[bucket]
 	if !ok {
@@ -134,7 +151,13 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 	if err != nil {
 		return err
 	}
-	defer func() { f.Close(); s.cleanup(stage) }()
+	preserveStage := false
+	defer func() {
+		f.Close()
+		if !preserveStage {
+			s.cleanup(stage)
+		}
+	}()
 	hash := sha256.New()
 	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(contextReader{ctx, body}, s.maxBytes+1))
 	if err != nil {
@@ -163,6 +186,9 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if err = s.stateError(); err != nil {
 		return err
 	}
 	// Reject symlinks and unexpected destination types even if introduced locally.
@@ -197,21 +223,33 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 		(!exists && s.maxObjects > 0 && s.objectCount >= s.maxObjects) {
 		return objectstore.ErrQuotaExceeded
 	}
-	if err = s.rename(stage, dest); err != nil {
+	meta := objectstore.Object{SHA256: hex.EncodeToString(hash.Sum(nil)), ID: id, Size: info.Size(), ContentType: contentType, LastModified: info.ModTime().UTC()}
+	tx := objectTransaction{Version: 1, ID: randomID, Action: "put", Object: meta}
+	preserveStage = true
+	s.recoveryRequired = true
+	decided, err := s.beginTransaction(ctx, tx)
+	if !decided {
+		preserveStage = false
+		s.recoveryRequired = false
+	}
+	if err != nil {
+		if decided {
+			return errors.Join(objectstore.ErrRecoveryRequired, err)
+		}
 		return err
 	}
-	// Rename is the commit point. A later directory-sync failure is an uncertain
-	// durability result, not permission to roll back an already visible object.
+	meta, err = s.completeTransaction(tx, false)
+	if err != nil {
+		return errors.Join(objectstore.ErrRecoveryRequired, err)
+	}
+	preserveStage = false
+	// Publish RAM state only after blob, metadata and journal cleanup are durable.
 	s.storedBytes = nextBytes
 	if !exists {
 		s.objectCount++
 	}
-	b.objects[key] = objectstore.Object{SHA256: hex.EncodeToString(hash.Sum(nil)), ID: id, Size: info.Size(), ContentType: contentType, LastModified: info.ModTime().UTC()}
+	b.objects[key] = meta
 	b.meta.LastModified = time.Now().UTC()
-	syncErr := errors.Join(s.syncDir(bucket), s.syncDir(privateDir))
-	publishedInfo, statErr := s.root.Stat(dest)
-	if statErr != nil {
-		return errors.Join(syncErr, statErr)
-	}
-	return errors.Join(syncErr, s.persistObjectMetadata(b.objects[key], publishedInfo))
+	s.recoveryRequired = false
+	return nil
 }

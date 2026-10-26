@@ -14,8 +14,8 @@ func (s *Store) Usage(ctx context.Context) (objectstore.Usage, error) {
 	if err := ctx.Err(); err != nil {
 		return objectstore.Usage{}, err
 	}
-	if s.closed {
-		return objectstore.Usage{}, objectstore.ErrClosed
+	if err := s.stateError(); err != nil {
+		return objectstore.Usage{}, err
 	}
 	return objectstore.Usage{StoredBytes: s.storedBytes, Objects: s.objectCount, Buckets: len(s.buckets), MaxStorageBytes: s.maxStorageBytes, MaxObjects: s.maxObjects}, nil
 }
@@ -32,8 +32,8 @@ func (s *Store) ListObjects(ctx context.Context, bucket objectstore.BucketID, op
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.closed {
-		return page, objectstore.ErrClosed
+	if err := s.stateError(); err != nil {
+		return page, err
 	}
 	if err := ctx.Err(); err != nil {
 		return page, err

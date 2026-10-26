@@ -15,8 +15,8 @@ func (s *Store) CreateBucket(ctx context.Context, id objectstore.BucketID) error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
-		return objectstore.ErrClosed
+	if err := s.stateError(); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -62,8 +62,8 @@ func (s *Store) DeleteBucket(ctx context.Context, id objectstore.BucketID) error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
-		return objectstore.ErrClosed
+	if err := s.stateError(); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
