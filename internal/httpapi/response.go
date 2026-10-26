@@ -32,6 +32,12 @@ func writeStorageError(w http.ResponseWriter, err error) {
 	var maxErr *http.MaxBytesError
 	var netErr net.Error
 	switch {
+	case errors.Is(err, objectstore.ErrQuotaExceeded):
+		status = http.StatusConflict
+		message = objectstore.ErrQuotaExceeded.Error()
+	case errors.Is(err, objectstore.ErrInvalidList):
+		status = http.StatusBadRequest
+		message = objectstore.ErrInvalidList.Error()
 	case errors.Is(err, objectstore.ErrInvalid):
 		status = http.StatusBadRequest
 		message = objectstore.ErrInvalid.Error()

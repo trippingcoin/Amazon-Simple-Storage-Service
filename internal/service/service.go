@@ -13,6 +13,8 @@ import (
 // visibility must share a commit point. Splitting these into independent writes
 // would break the crash-recovery guarantee. Close belongs to the application.
 type Repository interface {
+	Usage(context.Context) (objectstore.Usage, error)
+	ListObjects(context.Context, objectstore.BucketID, objectstore.ListOptions) (objectstore.ObjectPage, error)
 	ListBuckets(context.Context) ([]objectstore.Bucket, error)
 	CreateBucket(context.Context, objectstore.BucketID) error
 	DeleteBucket(context.Context, objectstore.BucketID) error
@@ -117,6 +119,34 @@ func (s *Service) OpenObject(ctx context.Context, bucket, key string) (objectsto
 	result, err := s.repo.OpenObject(ctx, id)
 	if err != nil {
 		return objectstore.Download{}, fmt.Errorf("open object: %w", err)
+	}
+	return result, nil
+}
+
+func (s *Service) Usage(ctx context.Context) (objectstore.Usage, error) {
+	if err := ctx.Err(); err != nil {
+		return objectstore.Usage{}, err
+	}
+	result, err := s.repo.Usage(ctx)
+	if err != nil {
+		return objectstore.Usage{}, fmt.Errorf("storage usage: %w", err)
+	}
+	return result, nil
+}
+func (s *Service) ListObjects(ctx context.Context, bucket string, opts objectstore.ListOptions) (objectstore.ObjectPage, error) {
+	id := objectstore.BucketID(bucket)
+	if err := id.Validate(); err != nil {
+		return objectstore.ObjectPage{}, err
+	}
+	if err := opts.Validate(); err != nil {
+		return objectstore.ObjectPage{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return objectstore.ObjectPage{}, err
+	}
+	result, err := s.repo.ListObjects(ctx, id, opts)
+	if err != nil {
+		return objectstore.ObjectPage{}, fmt.Errorf("list objects: %w", err)
 	}
 	return result, nil
 }

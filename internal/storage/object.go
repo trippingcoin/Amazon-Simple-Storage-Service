@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 	"os"
 	"time"
@@ -62,6 +63,8 @@ func (s *Store) DeleteObject(ctx context.Context, id objectstore.ObjectID) error
 	if err := s.root.Remove(bucket + "/" + key); err != nil {
 		return err
 	}
+	s.storedBytes -= b.objects[key].Size
+	s.objectCount--
 	delete(b.objects, key)
 	b.meta.LastModified = time.Now().UTC()
 	return s.syncDir(bucket)
@@ -189,11 +192,26 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 	} else if !errors.Is(e, fs.ErrNotExist) {
 		return e
 	}
+	old, exists := b.objects[key]
+	// Evaluate against the current published version under the publication lock.
+	// A lowered quota must still permit deletion and non-growing replacement.
+	if info.Size() > math.MaxInt64-(s.storedBytes-old.Size) {
+		return objectstore.ErrQuotaExceeded
+	}
+	nextBytes := s.storedBytes - old.Size + info.Size()
+	if (s.maxStorageBytes > 0 && nextBytes > s.maxStorageBytes && info.Size() > old.Size) ||
+		(!exists && s.maxObjects > 0 && s.objectCount >= s.maxObjects) {
+		return objectstore.ErrQuotaExceeded
+	}
 	if err = s.rename(stage, dest); err != nil {
 		return err
 	}
 	// Rename is the commit point. A later directory-sync failure is an uncertain
 	// durability result, not permission to roll back an already visible object.
+	s.storedBytes = nextBytes
+	if !exists {
+		s.objectCount++
+	}
 	b.objects[key] = objectstore.Object{SHA256: hex.EncodeToString(hash.Sum(nil)), ID: id, Size: info.Size(), ContentType: contentType, LastModified: info.ModTime().UTC()}
 	b.meta.LastModified = time.Now().UTC()
 	return errors.Join(s.syncDir(bucket), s.syncDir(privateDir))

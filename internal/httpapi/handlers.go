@@ -11,12 +11,15 @@ func bucketHandler(s Operations) http.HandlerFunc {
 		name := r.PathValue("bucket")
 		var err error
 		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			listObjects(w, r, s, name)
+			return
 		case http.MethodPut:
 			err = s.CreateBucket(r.Context(), name)
 		case http.MethodDelete:
 			err = s.DeleteBucket(r.Context(), name)
 		default:
-			w.Header().Set("Allow", "PUT, DELETE")
+			w.Header().Set("Allow", "GET, HEAD, PUT, DELETE")
 			writeXMLError(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}

@@ -62,6 +62,9 @@ func (b *countedBody) Read(p []byte) (int, error) {
 
 // All labels come from fixed vocabularies, not names, URLs, headers or errors.
 func operation(r *http.Request) string {
+	if r.URL.Path == "/-/usage" {
+		return "usage"
+	}
 	if r.URL.Path == "/-/metrics" {
 		return "metrics"
 	}
@@ -73,6 +76,8 @@ func operation(r *http.Request) string {
 		}
 		if parts[0] != "" {
 			switch r.Method {
+			case "GET", "HEAD":
+				return "list_objects"
 			case "PUT":
 				return "create_bucket"
 			case "DELETE":

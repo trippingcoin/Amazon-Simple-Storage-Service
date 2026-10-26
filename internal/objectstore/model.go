@@ -43,3 +43,22 @@ type Object struct {
 	ContentType  string
 	LastModified time.Time
 }
+
+// Usage counts published objects, not staging files or retained open versions.
+type Usage struct {
+	StoredBytes     int64
+	Objects         int64
+	Buckets         int
+	MaxStorageBytes int64
+	MaxObjects      int64
+}
+type ListOptions struct {
+	Prefix string
+	After  ObjectKey
+	Limit  int
+}
+type ObjectPage struct {
+	Objects   []Object
+	NextAfter ObjectKey
+	HasMore   bool
+}

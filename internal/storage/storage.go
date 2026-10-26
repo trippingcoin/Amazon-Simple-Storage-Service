@@ -31,14 +31,16 @@ type bucketState struct {
 	uploads int
 }
 type Store struct {
-	mu        sync.RWMutex
-	root      *os.Root
-	lock      *os.File
-	buckets   map[string]*bucketState
-	slots     chan struct{}
-	downloads chan struct{}
-	maxBytes  int64
-	closed    bool
+	mu                          sync.RWMutex
+	root                        *os.Root
+	lock                        *os.File
+	buckets                     map[string]*bucketState
+	slots                       chan struct{}
+	downloads                   chan struct{}
+	maxBytes                    int64
+	maxStorageBytes, maxObjects int64
+	storedBytes, objectCount    int64
+	closed                      bool
 	// Injected only by package tests to exercise publication failures.
 	rename func(string, string) error
 }
@@ -71,7 +73,7 @@ func Open(dir string, opts Options) (*Store, error) {
 	if downloads == 0 {
 		downloads = 16
 	}
-	s := &Store{downloads: make(chan struct{}, downloads), root: root, buckets: make(map[string]*bucketState), slots: make(chan struct{}, opts.MaxConcurrentUploads), maxBytes: opts.MaxObjectBytes, rename: root.Rename}
+	s := &Store{maxStorageBytes: opts.MaxStorageBytes, maxObjects: opts.MaxObjects, downloads: make(chan struct{}, downloads), root: root, buckets: make(map[string]*bucketState), slots: make(chan struct{}, opts.MaxConcurrentUploads), maxBytes: opts.MaxObjectBytes, rename: root.Rename}
 	ok := false
 	defer func() {
 		if !ok {

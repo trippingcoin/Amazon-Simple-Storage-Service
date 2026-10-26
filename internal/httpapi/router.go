@@ -17,6 +17,8 @@ import (
 // Operations is the transport's application boundary. It does not expose a
 // storage path, process lock, Close method, or a concrete filesystem backend.
 type Operations interface {
+	Usage(context.Context) (objectstore.Usage, error)
+	ListObjects(context.Context, string, objectstore.ListOptions) (objectstore.ObjectPage, error)
 	ListBuckets(context.Context) ([]objectstore.Bucket, error)
 	CreateBucket(context.Context, string) error
 	DeleteBucket(context.Context, string) error
@@ -54,6 +56,7 @@ func New(s Operations, opts Options) (http.Handler, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/-/metrics", metrics.serve)
+	mux.HandleFunc("/-/usage", usageHandler(s))
 	mux.HandleFunc("/{$}", rootHandler(s))
 	mux.HandleFunc("/{bucket}", bucketHandler(s))
 	mux.HandleFunc("/{bucket}/{$}", bucketHandler(s))

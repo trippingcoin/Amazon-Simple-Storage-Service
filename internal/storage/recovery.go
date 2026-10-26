@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -130,6 +131,11 @@ func (s *Store) recover() error {
 			if n > 0 {
 				contentType = http.DetectContentType(prefix[:n])
 			}
+			if fi.Size() > math.MaxInt64-s.storedBytes {
+				return errors.New("stored byte total overflows")
+			}
+			s.storedBytes += fi.Size()
+			s.objectCount++
 			b.objects[key] = objectstore.Object{ID: objectstore.ObjectID{Bucket: objectstore.BucketID(name), Key: objectstore.ObjectKey(key)}, Size: fi.Size(), ContentType: contentType, LastModified: fi.ModTime().UTC()}
 			if fi.ModTime().After(b.meta.LastModified) {
 				b.meta.LastModified = fi.ModTime().UTC()

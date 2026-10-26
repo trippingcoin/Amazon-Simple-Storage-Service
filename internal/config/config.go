@@ -29,6 +29,8 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	flags.StringVar(&c.LogLevel, "log-level", "info", "JSON log level: debug, info, warn, error")
 	flags.StringVar(&c.Host, "host", "127.0.0.1", "Listen IP address")
 	flags.IntVar(&c.Port, "port", 8080, "Listen port")
+	flags.Int64Var(&c.Limits.MaxStorageBytes, "max-storage-bytes", 0, "Maximum published object bytes; 0 disables quota")
+	flags.Int64Var(&c.Limits.MaxObjects, "max-objects", 0, "Maximum published objects; 0 disables quota")
 	flags.Int64Var(&c.Limits.MaxObjectBytes, "max-object-bytes", 64<<20, "Maximum object size in bytes")
 	flags.IntVar(&c.Limits.MaxConcurrentDownloads, "max-downloads", 16, "Maximum simultaneous downloads")
 	flags.IntVar(&c.Limits.MaxConcurrentUploads, "max-uploads", 8, "Maximum simultaneous uploads")
