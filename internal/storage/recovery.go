@@ -22,14 +22,14 @@ func (s *Store) recover() error {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "lock" {
+		if name == "lock" || name == "metadata" {
 			continue
 		}
 		if !temporaryPattern.MatchString(name) {
 			return fmt.Errorf("unexpected file in private storage: %q", name)
 		}
 		path := privateDir + "/" + name
-		if strings.HasPrefix(name, "upload-") {
+		if strings.HasPrefix(name, "upload-") || strings.HasPrefix(name, "metadata-") {
 			if !entry.Type().IsRegular() {
 				return fmt.Errorf("unsafe temporary upload: %q", name)
 			}
@@ -115,26 +115,34 @@ func (s *Store) recover() error {
 			}
 			fi, statErr := f.Stat()
 			contentType, readErr := detectContentType(f)
-			e = errors.Join(statErr, readErr, f.Close())
+			e = errors.Join(statErr, readErr)
 			if e != nil {
+				f.Close()
 				return e
 			}
 			if !fi.Mode().IsRegular() {
+				f.Close()
 				return fmt.Errorf("non-regular object %q/%q", name, key)
 			}
 			if fi.Size() > math.MaxInt64-s.storedBytes {
+				f.Close()
 				return errors.New("stored byte total overflows")
 			}
 			s.storedBytes += fi.Size()
 			s.objectCount++
-			b.objects[key] = objectstore.Object{ID: objectstore.ObjectID{Bucket: objectstore.BucketID(name), Key: objectstore.ObjectKey(key)}, Size: fi.Size(), ContentType: contentType, LastModified: fi.ModTime().UTC()}
+			meta := objectstore.Object{ID: objectstore.ObjectID{Bucket: objectstore.BucketID(name), Key: objectstore.ObjectKey(key)}, Size: fi.Size(), ContentType: contentType, LastModified: fi.ModTime().UTC()}
+			meta, e = s.recoverObjectMetadata(meta, f, fi)
+			if e = errors.Join(e, f.Close()); e != nil {
+				return e
+			}
+			b.objects[key] = meta
 			if fi.ModTime().After(b.meta.LastModified) {
 				b.meta.LastModified = fi.ModTime().UTC()
 			}
 		}
 		s.buckets[name] = b
 	}
-	return nil
+	return s.pruneObjectMetadata()
 }
 
 // Legacy CSV contributes only optional creation timestamps. Truncated or stale

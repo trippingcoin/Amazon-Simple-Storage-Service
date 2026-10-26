@@ -71,8 +71,8 @@ func (s *Store) OpenObject(ctx context.Context, id objectstore.ObjectID) (object
 		return out, errors.New("object changed outside storage service")
 	}
 	stream := &downloadStream{ctx: ctx, file: f, release: func() { <-s.downloads }}
-	// Recovery only reads MIME prefixes. Hash legacy/recovered files lazily so
-	// startup remains independent of total stored bytes.
+	// Normally populated by durable metadata/recovery. Retain the bounded
+	// fallback for an in-memory entry without a checksum.
 	if meta.SHA256 == "" {
 		hash := sha256.New()
 		if _, err = io.Copy(hash, stream); err != nil {
@@ -86,6 +86,10 @@ func (s *Store) OpenObject(ctx context.Context, id objectstore.ObjectID) (object
 		if current, e := s.root.Stat(path); e == nil && os.SameFile(info, current) {
 			if bucket := s.buckets[string(id.Bucket)]; bucket != nil {
 				bucket.objects[string(id.Key)] = meta
+				if e = s.persistObjectMetadata(meta, current); e != nil {
+					s.mu.Unlock()
+					return out, e
+				}
 			}
 		}
 		s.mu.Unlock()

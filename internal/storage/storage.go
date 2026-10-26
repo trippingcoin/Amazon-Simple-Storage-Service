@@ -21,7 +21,7 @@ import (
 const privateDir = ".triple-s"
 const bucketInfo = ".bucket.json"
 
-var temporaryPattern = regexp.MustCompile(`^(upload|bucket)-[0-9a-f]{32}$`)
+var temporaryPattern = regexp.MustCompile(`^(upload|bucket|metadata)-[0-9a-f]{32}$`)
 
 type Options = objectstore.Limits
 
@@ -42,7 +42,8 @@ type Store struct {
 	storedBytes, objectCount    int64
 	closed                      bool
 	// Injected only by package tests to exercise publication failures.
-	rename func(string, string) error
+	rename         func(string, string) error
+	metadataRename func(string, string) error
 }
 
 func Open(dir string, opts Options) (*Store, error) {
@@ -73,7 +74,7 @@ func Open(dir string, opts Options) (*Store, error) {
 	if downloads == 0 {
 		downloads = 16
 	}
-	s := &Store{maxStorageBytes: opts.MaxStorageBytes, maxObjects: opts.MaxObjects, downloads: make(chan struct{}, downloads), root: root, buckets: make(map[string]*bucketState), slots: make(chan struct{}, opts.MaxConcurrentUploads), maxBytes: opts.MaxObjectBytes, rename: root.Rename}
+	s := &Store{maxStorageBytes: opts.MaxStorageBytes, maxObjects: opts.MaxObjects, downloads: make(chan struct{}, downloads), root: root, buckets: make(map[string]*bucketState), slots: make(chan struct{}, opts.MaxConcurrentUploads), maxBytes: opts.MaxObjectBytes, rename: root.Rename, metadataRename: root.Rename}
 	ok := false
 	defer func() {
 		if !ok {
@@ -101,6 +102,9 @@ func Open(dir string, opts Options) (*Store, error) {
 	}
 	if err = lockFile(s.lock); err != nil {
 		return nil, fmt.Errorf("exclusive storage lock: %w", err)
+	}
+	if err = s.prepareObjectMetadata(); err != nil {
+		return nil, err
 	}
 	if err = s.recover(); err != nil {
 		return nil, err

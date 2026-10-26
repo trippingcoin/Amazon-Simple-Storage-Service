@@ -66,7 +66,7 @@ func (s *Store) DeleteObject(ctx context.Context, id objectstore.ObjectID) error
 	s.objectCount--
 	delete(b.objects, key)
 	b.meta.LastModified = time.Now().UTC()
-	return s.syncDir(bucket)
+	return errors.Join(s.syncDir(bucket), s.removeObjectMetadata(id))
 }
 func (s *Store) regularObject(bucket, key string) error {
 	info, err := s.root.Lstat(bucket)
@@ -208,5 +208,10 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 	}
 	b.objects[key] = objectstore.Object{SHA256: hex.EncodeToString(hash.Sum(nil)), ID: id, Size: info.Size(), ContentType: contentType, LastModified: info.ModTime().UTC()}
 	b.meta.LastModified = time.Now().UTC()
-	return errors.Join(s.syncDir(bucket), s.syncDir(privateDir))
+	syncErr := errors.Join(s.syncDir(bucket), s.syncDir(privateDir))
+	publishedInfo, statErr := s.root.Stat(dest)
+	if statErr != nil {
+		return errors.Join(syncErr, statErr)
+	}
+	return errors.Join(syncErr, s.persistObjectMetadata(b.objects[key], publishedInfo))
 }
