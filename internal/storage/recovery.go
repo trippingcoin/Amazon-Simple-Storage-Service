@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"math"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -115,21 +114,13 @@ func (s *Store) recover() error {
 				return e
 			}
 			fi, statErr := f.Stat()
-			var prefix [512]byte
-			n, readErr := f.Read(prefix[:])
-			if errors.Is(readErr, io.EOF) {
-				readErr = nil
-			}
+			contentType, readErr := detectContentType(f)
 			e = errors.Join(statErr, readErr, f.Close())
 			if e != nil {
 				return e
 			}
 			if !fi.Mode().IsRegular() {
 				return fmt.Errorf("non-regular object %q/%q", name, key)
-			}
-			contentType := "application/octet-stream"
-			if n > 0 {
-				contentType = http.DetectContentType(prefix[:n])
 			}
 			if fi.Size() > math.MaxInt64-s.storedBytes {
 				return errors.New("stored byte total overflows")

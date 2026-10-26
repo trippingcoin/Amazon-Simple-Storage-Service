@@ -14,8 +14,9 @@ import (
 func writeXML(w http.ResponseWriter, status int, value any) {
 	data, err := xml.MarshalIndent(value, "", "  ")
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+		// Do not leak marshal errors or change the API error representation.
+		status = http.StatusInternalServerError
+		data = []byte("<Error><Message>Internal Server Error</Message><Code>500</Code></Error>")
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	w.Header().Set("X-Content-Type-Options", "nosniff")

@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"math"
-	"net/http"
 	"os"
 	"time"
 )
@@ -101,7 +100,7 @@ func (r contextReader) Read(p []byte) (int, error) {
 
 func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.Reader) error {
 	bucket, key := string(id.Bucket), string(id.Key)
-	if id.Validate() != nil {
+	if id.Validate() != nil || body == nil {
 		return objectstore.ErrInvalid
 	}
 	if err := ctx.Err(); err != nil {
@@ -154,14 +153,9 @@ func (s *Store) PutObject(ctx context.Context, id objectstore.ObjectID, body io.
 	if err != nil {
 		return err
 	}
-	var prefix [512]byte
-	read, err := f.ReadAt(prefix[:], 0)
-	if err != nil && !errors.Is(err, io.EOF) {
+	contentType, err := detectContentType(f)
+	if err != nil {
 		return err
-	}
-	contentType := "application/octet-stream"
-	if read > 0 {
-		contentType = http.DetectContentType(prefix[:read])
 	}
 	if err = f.Close(); err != nil {
 		return err
