@@ -22,6 +22,13 @@ func (s *Store) recover() error {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
+		if name == "tenants" {
+			info, e := s.root.Lstat(privateDir + "/tenants")
+			if e != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+				return errors.New("unsafe tenant directory")
+			}
+			continue
+		}
 		if name == "lock" || name == "metadata" || name == "transactions" {
 			continue
 		}

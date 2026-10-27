@@ -1,6 +1,7 @@
 package main
 
 import (
+	"A3S/internal/access"
 	"A3S/internal/config"
 	"A3S/internal/httpapi"
 	"A3S/internal/service"
@@ -53,16 +54,35 @@ func (transportLogWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func run(c config.Config) error {
+func run(c config.Config) (resultErr error) {
 	store, err := storage.Open(c.DataDir, c.Limits)
 	if err != nil {
 		return fmt.Errorf("open storage: %w", err)
 	}
-	defer store.Close()
+	defer func() { resultErr = errors.Join(resultErr, store.Close()) }()
 	defer slog.Info("server_stopped")
 	base, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	api, err := httpapi.New(service.New(store), httpapi.Options{Token: c.Token, RequestTimeout: c.RequestTimeout, MaxObjectBytes: c.Limits.MaxObjectBytes})
+	names := make([]string, 0, len(c.Users))
+	for _, u := range c.Users {
+		names = append(names, access.Namespace(u.ID))
+	}
+	tenantAPIs := make(map[string]httpapi.Operations)
+	if len(names) > 0 {
+		namespaces, e := store.OpenNamespaces(names, c.Limits)
+		if e != nil {
+			return fmt.Errorf("open namespaces: %w", e)
+		}
+		defer func() {
+			for _, ns := range namespaces {
+				resultErr = errors.Join(resultErr, ns.Close())
+			}
+		}()
+		for _, u := range c.Users {
+			tenantAPIs[u.ID] = service.New(namespaces[access.Namespace(u.ID)])
+		}
+	}
+	api, err := httpapi.New(service.New(store), httpapi.Options{Token: c.Token, Users: c.Users, Tenants: tenantAPIs, RequestTimeout: c.RequestTimeout, MaxObjectBytes: c.Limits.MaxObjectBytes, MaxConcurrentUploads: c.Limits.MaxConcurrentUploads, MaxConcurrentDownloads: c.Limits.MaxConcurrentDownloads})
 	if err != nil {
 		return err
 	}
@@ -104,7 +124,7 @@ func run(c config.Config) error {
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			return serveErr
 		}
-		return store.Close()
+		return nil
 	}
 }
 func main() {

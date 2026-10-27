@@ -2,6 +2,7 @@
 package config
 
 import (
+	"A3S/internal/access"
 	"A3S/internal/objectstore"
 	"errors"
 	"flag"
@@ -15,6 +16,8 @@ import (
 type Config struct {
 	DataDir, Host, Token, TLSCert, TLSKey string
 	LogLevel                              string
+	UsersFile                             string
+	Users                                 []access.User
 	Port                                  int
 	Limits                                objectstore.Limits
 	RequestTimeout, ShutdownTimeout       time.Duration
@@ -25,6 +28,7 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	c := Config{Token: token}
 	flags := flag.NewFlagSet("triple-s", flag.ContinueOnError)
 	flags.SetOutput(out)
+	flags.StringVar(&c.UsersFile, "users-file", "", "Private JSON identity registry; loaded at startup")
 	flags.StringVar(&c.DataDir, "dir", "data", "Storage directory (single process, local filesystem)")
 	flags.StringVar(&c.LogLevel, "log-level", "info", "JSON log level: debug, info, warn, error")
 	flags.StringVar(&c.Host, "host", "127.0.0.1", "Listen IP address")
@@ -66,8 +70,22 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	if !ip.IsLoopback() && c.TLSCert == "" && !c.AllowInsecureHTTP {
 		return c, errors.New("non-loopback HTTP requires TLS or explicit allow-insecure-http behind a trusted proxy")
 	}
-	if len(c.Token) < 32 || strings.ContainsAny(c.Token, " \t\r\n") {
+	if c.Token != "" && (len(c.Token) < 32 || strings.ContainsAny(c.Token, " \t\r\n")) {
 		return c, errors.New("TRIPLE_S_TOKEN must contain at least 32 bytes and no whitespace")
+	}
+	if c.UsersFile != "" {
+		var err error
+		c.Users, err = access.Load(c.UsersFile)
+		if err != nil {
+			return c, err
+		}
+	}
+	active := c.Token != ""
+	for _, u := range c.Users {
+		active = active || !u.Disabled
+	}
+	if !active {
+		return c, errors.New("at least one active credential is required")
 	}
 	if err := c.Limits.Validate(); err != nil {
 		return c, err

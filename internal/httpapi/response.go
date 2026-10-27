@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"A3S/internal/access"
 	"A3S/internal/objectstore"
 	"context"
 	"encoding/xml"
@@ -33,6 +34,9 @@ func writeStorageError(w http.ResponseWriter, err error) {
 	var maxErr *http.MaxBytesError
 	var netErr net.Error
 	switch {
+	case errors.Is(err, access.ErrDenied):
+		status = http.StatusForbidden
+		message = "Access denied"
 	case errors.Is(err, objectstore.ErrRecoveryRequired):
 		status = http.StatusServiceUnavailable
 		message = objectstore.ErrRecoveryRequired.Error()
