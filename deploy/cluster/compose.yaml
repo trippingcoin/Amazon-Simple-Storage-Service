@@ -1,0 +1,78 @@
+# Local integration topology. PostgreSQL and MinIO here are single-node demos,
+# not an HA storage deployment. Supply credentials and a private users file.
+name: triple-s-cluster
+x-cluster-env: &cluster-env
+  TRIPLE_S_DATABASE_URL: postgres://triples:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/triples?sslmode=disable
+  TRIPLE_S_S3_BUCKET: triples-objects
+  AWS_REGION: us-east-1
+  TRIPLE_S_S3_ENDPOINT: http://minio:9000
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+  AWS_EC2_METADATA_DISABLED: 'true'
+  TRIPLE_S_CLUSTER_INSECURE: '1'
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: triples
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: triples
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U triples -d triples']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  minio:
+    build:
+      context: ../..
+      dockerfile: deploy/cluster/minio.Dockerfile
+      args:
+        MINIO_VERSION: RELEASE.2025-10-15T17-29-55Z
+    image: triple-s-minio:RELEASE.2025-10-15T17-29-55Z
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    ports: ['127.0.0.1:9000:9000', '127.0.0.1:9001:9001']
+    volumes: [minio-data:/data]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:9000/minio/health/ready']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  admin:
+    build: ../..
+    entrypoint: [/usr/local/bin/triple-s-cluster]
+    profiles: [tools]
+    user: '${LOCAL_UID:-10001}:${LOCAL_GID:-10001}'
+    environment: *cluster-env
+    volumes:
+      - ${TRIPLE_S_USERS_FILE:?set absolute TRIPLE_S_USERS_FILE}:/run/users.json:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+  api:
+    build: ../..
+    command: ['--backend', cluster, '--host', '0.0.0.0', '--allow-insecure-http']
+    environment: *cluster-env
+    read_only: true
+    tmpfs: ['/tmp:mode=1777,size=1g']
+    stop_grace_period: 40s
+    healthcheck:
+      test: [CMD, /usr/local/bin/triple-s-cluster, ready]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+  gateway:
+    image: nginx:1.28-alpine
+    ports: ['127.0.0.1:8080:8080']
+    volumes: ['./nginx.conf:/etc/nginx/nginx.conf:ro']
+    depends_on:
+      api: {condition: service_healthy}
+volumes:
+  postgres-data:
+  minio-data:

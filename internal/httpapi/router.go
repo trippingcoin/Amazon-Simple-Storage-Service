@@ -29,6 +29,7 @@ type Operations interface {
 	DeleteObject(context.Context, string, string) error
 }
 type Options struct {
+	Authority                                    Authority
 	Logger                                       *slog.Logger
 	Token                                        string
 	Users                                        []access.User
@@ -45,7 +46,10 @@ func (o Options) Validate() error {
 	if err := access.Validate(o.Users); err != nil {
 		return err
 	}
-	active := o.Token != ""
+	if o.Authority != nil && (o.Token != "" || len(o.Users) != 0 || len(o.Tenants) != 0) {
+		return errors.New("shared authority cannot be combined with local credentials")
+	}
+	active := o.Token != "" || o.Authority != nil
 	for _, u := range o.Users {
 		active = active || !u.Disabled
 		if o.Tenants[u.ID] == nil {
@@ -102,6 +106,7 @@ func New(s Operations, opts Options) (http.Handler, error) {
 		return mux
 	}
 	legacy := makeMux(s)
+	dynamic := makeMux(requestOperations{})
 	tenants := make(map[string]*http.ServeMux, len(opts.Users))
 	users := append([]access.User(nil), opts.Users...)
 	shared := make(map[string]map[string]*http.ServeMux, len(users))
@@ -131,8 +136,18 @@ func New(s Operations, opts Options) (http.Handler, error) {
 			w = headWriter{w}
 		}
 		w.Header().Set("Cache-Control", "no-store")
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
+		defer cancel()
 		auth := r.Header.Get("Authorization")
 		principal, authenticated := access.Match(users, strings.TrimPrefix(auth, "Bearer "))
+		if opts.Authority != nil {
+			var err error
+			principal, authenticated, err = opts.Authority.Authenticate(ctx, strings.TrimPrefix(auth, "Bearer "))
+			if err != nil {
+				writeXMLError(w, "Authorization service unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
 		if len(r.Header.Values("Authorization")) != 1 || !strings.HasPrefix(auth, "Bearer ") || !authenticated {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="triple-s"`)
 			writeXMLError(w, "Authentication required", http.StatusUnauthorized)
@@ -140,25 +155,71 @@ func New(s Operations, opts Options) (http.Handler, error) {
 		}
 		mux := legacy
 		scopes, hasScope := r.Header[http.CanonicalHeaderKey("X-Storage-User")]
-		if principal.Role != "admin" {
-			if r.URL.Path == "/-/metrics" {
-				writeXMLError(w, "Access denied", http.StatusForbidden)
+
+		if opts.Authority != nil {
+			owner := principal.ID
+			if principal.Role == "admin" {
+				owner = ""
+			}
+			var grants map[string]string
+			if hasScope {
+				if len(scopes) != 1 || scopes[0] == "" {
+					writeXMLError(w, "Invalid namespace selection", http.StatusBadRequest)
+					return
+				}
+				owner = scopes[0]
+				if principal.Role != "admin" {
+					grants = map[string]string{}
+					for _, g := range principal.Grants {
+						if g.Owner == owner {
+							grants[g.Bucket] = g.Permission
+						}
+					}
+					if len(grants) == 0 {
+						writeStorageError(w, access.ErrDenied)
+						return
+					}
+				}
+			}
+			if principal.Role != "admin" && r.URL.Path == "/-/metrics" {
+				writeStorageError(w, access.ErrDenied)
 				return
 			}
-			mux = tenants[principal.ID]
-			if hasScope {
-				if len(scopes) != 1 || shared[principal.ID][scopes[0]] == nil {
+			ops, exists, err := opts.Authority.Namespace(ctx, owner)
+			if err != nil {
+				writeXMLError(w, "Storage service unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if !exists {
+				writeXMLError(w, "Unknown namespace", http.StatusBadRequest)
+				return
+			}
+			if grants != nil {
+				ops = &sharedOperations{base: ops, grants: grants}
+			}
+			ctx = context.WithValue(ctx, operationsKey{}, ops)
+			mux = dynamic
+		} else {
+			if principal.Role != "admin" {
+				if r.URL.Path == "/-/metrics" {
 					writeXMLError(w, "Access denied", http.StatusForbidden)
 					return
 				}
-				mux = shared[principal.ID][scopes[0]]
+				mux = tenants[principal.ID]
+				if hasScope {
+					if len(scopes) != 1 || shared[principal.ID][scopes[0]] == nil {
+						writeXMLError(w, "Access denied", http.StatusForbidden)
+						return
+					}
+					mux = shared[principal.ID][scopes[0]]
+				}
+			} else if hasScope {
+				if len(scopes) != 1 || tenants[scopes[0]] == nil {
+					writeXMLError(w, "Unknown user namespace", http.StatusBadRequest)
+					return
+				}
+				mux = tenants[scopes[0]]
 			}
-		} else if hasScope {
-			if len(scopes) != 1 || tenants[scopes[0]] == nil {
-				writeXMLError(w, "Unknown user namespace", http.StatusBadRequest)
-				return
-			}
-			mux = tenants[scopes[0]]
 		}
 
 		// Shared admission bounds resources across all mounted namespaces. The store
@@ -179,8 +240,6 @@ func New(s Operations, opts Options) (http.Handler, error) {
 				return
 			}
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), timeout)
-		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	}), logger), nil
 }

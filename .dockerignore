@@ -1,0 +1,10 @@
+.git
+.aws
+.env
+.env.*
+data
+.cluster-secrets
+*.token
+users.json
+*.tar
+*.log

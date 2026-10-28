@@ -2,6 +2,7 @@ package main
 
 import (
 	"A3S/internal/access"
+	"A3S/internal/cluster"
 	"A3S/internal/config"
 	"A3S/internal/httpapi"
 	"A3S/internal/service"
@@ -55,37 +56,57 @@ func (transportLogWriter) Write(p []byte) (int, error) {
 }
 
 func run(c config.Config) (resultErr error) {
-	store, err := storage.Open(c.DataDir, c.Limits)
-	if err != nil {
-		return fmt.Errorf("open storage: %w", err)
-	}
-	defer func() { resultErr = errors.Join(resultErr, store.Close()) }()
-	defer slog.Info("server_stopped")
 	base, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	names := make([]string, 0, len(c.Users))
-	for _, u := range c.Users {
-		names = append(names, access.Namespace(u.ID))
-	}
-	tenantAPIs := make(map[string]httpapi.Operations)
-	if len(names) > 0 {
-		namespaces, e := store.OpenNamespaces(names, c.Limits)
+	defer slog.Info("server_stopped")
+	var api http.Handler
+	var err error
+	opts := httpapi.Options{Token: c.Token, Users: c.Users, RequestTimeout: c.RequestTimeout, MaxObjectBytes: c.Limits.MaxObjectBytes, MaxConcurrentUploads: c.Limits.MaxConcurrentUploads, MaxConcurrentDownloads: c.Limits.MaxConcurrentDownloads}
+	if c.Backend == "cluster" {
+		startup, done := context.WithTimeout(base, 30*time.Second)
+		shared, e := cluster.Open(startup, cluster.FromEnv())
+		done()
 		if e != nil {
-			return fmt.Errorf("open namespaces: %w", e)
+			return fmt.Errorf("open cluster: %w", e)
 		}
-		defer func() {
-			for _, ns := range namespaces {
-				resultErr = errors.Join(resultErr, ns.Close())
-			}
-		}()
+		defer shared.Close()
+		opts.Authority = clusterAuthority{shared}
+		opts.MaxObjectBytes = shared.MaxObjectBytes
+		api, err = httpapi.New(nil, opts)
+		if err == nil {
+			api = withClusterReadiness(api, shared)
+		}
+	} else {
+		store, e := storage.Open(c.DataDir, c.Limits)
+		if e != nil {
+			return fmt.Errorf("open storage: %w", e)
+		}
+		defer func() { resultErr = errors.Join(resultErr, store.Close()) }()
+		names := make([]string, 0, len(c.Users))
 		for _, u := range c.Users {
-			tenantAPIs[u.ID] = service.New(namespaces[access.Namespace(u.ID)])
+			names = append(names, access.Namespace(u.ID))
 		}
+		opts.Tenants = make(map[string]httpapi.Operations)
+		if len(names) > 0 {
+			namespaces, e := store.OpenNamespaces(names, c.Limits)
+			if e != nil {
+				return e
+			}
+			defer func() {
+				for _, ns := range namespaces {
+					resultErr = errors.Join(resultErr, ns.Close())
+				}
+			}()
+			for _, u := range c.Users {
+				opts.Tenants[u.ID] = service.New(namespaces[access.Namespace(u.ID)])
+			}
+		}
+		api, err = httpapi.New(service.New(store), opts)
 	}
-	api, err := httpapi.New(service.New(store), httpapi.Options{Token: c.Token, Users: c.Users, Tenants: tenantAPIs, RequestTimeout: c.RequestTimeout, MaxObjectBytes: c.Limits.MaxObjectBytes, MaxConcurrentUploads: c.Limits.MaxConcurrentUploads, MaxConcurrentDownloads: c.Limits.MaxConcurrentDownloads})
 	if err != nil {
 		return err
 	}
+
 	handler := &trackedHandler{next: api}
 	server := &http.Server{Addr: net.JoinHostPort(c.Host, strconv.Itoa(c.Port)), Handler: handler, ErrorLog: log.New(transportLogWriter{}, "", 0),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: c.RequestTimeout, WriteTimeout: c.RequestTimeout + 10*time.Second,
@@ -144,4 +165,35 @@ func main() {
 		slog.Error("server_failed")
 		os.Exit(1)
 	}
+}
+
+// Cluster authority resolves current grants and namespace state from PostgreSQL.
+type clusterAuthority struct{ s *cluster.Store }
+
+func (a clusterAuthority) Authenticate(ctx context.Context, token string) (access.User, bool, error) {
+	return a.s.Authenticate(ctx, token)
+}
+func (a clusterAuthority) Namespace(ctx context.Context, id string) (httpapi.Operations, bool, error) {
+	exists, e := a.s.HasNamespace(ctx, id)
+	return service.New(a.s.Namespace(id)), exists, e
+}
+func withClusterReadiness(next http.Handler, s *cluster.Store) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/-/ready" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != "GET" && r.Method != "HEAD" {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if e := s.Ready(ctx); e != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 }

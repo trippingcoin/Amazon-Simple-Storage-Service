@@ -14,6 +14,7 @@ import (
 )
 
 type Config struct {
+	Backend                               string
 	DataDir, Host, Token, TLSCert, TLSKey string
 	LogLevel                              string
 	UsersFile                             string
@@ -28,6 +29,7 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	c := Config{Token: token}
 	flags := flag.NewFlagSet("triple-s", flag.ContinueOnError)
 	flags.SetOutput(out)
+	flags.StringVar(&c.Backend, "backend", "local", "Storage backend: local or cluster")
 	flags.StringVar(&c.UsersFile, "users-file", "", "Private JSON identity registry; loaded at startup")
 	flags.StringVar(&c.DataDir, "dir", "data", "Storage directory (single process, local filesystem)")
 	flags.StringVar(&c.LogLevel, "log-level", "info", "JSON log level: debug, info, warn, error")
@@ -45,6 +47,24 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	flags.BoolVar(&c.AllowInsecureHTTP, "allow-insecure-http", false, "Allow non-loopback HTTP only behind a trusted TLS proxy")
 	if err := flags.Parse(args); err != nil {
 		return c, err
+	}
+	if c.Backend != "local" && c.Backend != "cluster" {
+		return c, errors.New("invalid backend")
+	}
+	if c.Backend == "cluster" && (c.Token != "" || c.UsersFile != "") {
+		return c, errors.New("cluster uses shared credentials; remove TRIPLE_S_TOKEN and users-file")
+	}
+	if c.Backend == "cluster" {
+		var incompatible bool
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "dir", "max-object-bytes", "max-storage-bytes", "max-objects":
+				incompatible = true
+			}
+		})
+		if incompatible {
+			return c, errors.New("cluster storage limits live in PostgreSQL; configure them with cluster initialization")
+		}
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
@@ -84,7 +104,7 @@ func Parse(args []string, token string, out io.Writer) (Config, error) {
 	for _, u := range c.Users {
 		active = active || !u.Disabled
 	}
-	if !active {
+	if !active && c.Backend != "cluster" {
 		return c, errors.New("at least one active credential is required")
 	}
 	if err := c.Limits.Validate(); err != nil {
