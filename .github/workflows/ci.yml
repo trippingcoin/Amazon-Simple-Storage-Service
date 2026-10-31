@@ -1,0 +1,77 @@
+name: Go checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.12'
+          cache: false
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go run ./tests vet ./...
+      - name: Unit, security, recovery and backup tests
+        run: go run ./tests -count=1 -timeout=3m ./...
+      - name: Race and real HTTP integration
+        run: go run ./tests -race -tags=integration -count=1 -timeout=5m ./...
+      - name: Large file and concurrent HTTP load
+        run: go run ./tests -race -tags=stress -run '^TestStress' -v -count=1 -timeout=5m .
+  cluster:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: triples_test
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['25432:5432']
+        options: >-
+          --health-cmd "pg_isready -U triples_test -d postgres"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.12'
+          cache: false
+      - name: Start isolated MinIO
+        run: |
+          docker run -d --name triple-s-test-minio -p 127.0.0.1:19000:9000 \
+            -e MINIO_ROOT_USER=triples-local-test \
+            -e MINIO_ROOT_PASSWORD=triples-local-test-password-only \
+            quay.io/minio/minio:RELEASE.2025-06-13T11-33-47Z server /data
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:19000/minio/health/ready; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Two replicas, shared quotas, ACL, multipart and publication failures
+        env:
+          TRIPLE_S_TEST_DATABASE_URL: postgres://triples_test@127.0.0.1:25432/postgres?sslmode=disable
+          TRIPLE_S_TEST_S3_ENDPOINT: http://127.0.0.1:19000
+        run: go run ./tests -race -tags=clusterintegration -run '^TestCluster' -v -count=1 -timeout=5m .
+      - name: Stop isolated MinIO
+        if: always()
+        run: docker rm -f triple-s-test-minio || true

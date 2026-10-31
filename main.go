@@ -5,6 +5,7 @@ import (
 	"A3S/internal/cluster"
 	"A3S/internal/config"
 	"A3S/internal/httpapi"
+	"A3S/internal/observatory"
 	"A3S/internal/service"
 	"A3S/internal/storage"
 	"context"
@@ -61,6 +62,7 @@ func run(c config.Config) (resultErr error) {
 	defer slog.Info("server_stopped")
 	var api http.Handler
 	var err error
+	var monitor *observatory.Monitor
 	opts := httpapi.Options{Token: c.Token, Users: c.Users, RequestTimeout: c.RequestTimeout, MaxObjectBytes: c.Limits.MaxObjectBytes, MaxConcurrentUploads: c.Limits.MaxConcurrentUploads, MaxConcurrentDownloads: c.Limits.MaxConcurrentDownloads}
 	if c.Backend == "cluster" {
 		startup, done := context.WithTimeout(base, 30*time.Second)
@@ -70,6 +72,11 @@ func run(c config.Config) (resultErr error) {
 			return fmt.Errorf("open cluster: %w", e)
 		}
 		defer shared.Close()
+		monitor, err = observatory.New("cluster", shared)
+		if err != nil {
+			return err
+		}
+		opts.Observatory = monitor
 		opts.Authority = clusterAuthority{shared}
 		opts.MaxObjectBytes = shared.MaxObjectBytes
 		api, err = httpapi.New(nil, opts)
@@ -101,16 +108,30 @@ func run(c config.Config) (resultErr error) {
 				opts.Tenants[u.ID] = service.New(namespaces[access.Namespace(u.ID)])
 			}
 		}
-		api, err = httpapi.New(service.New(store), opts)
+		local := service.New(store)
+		all := []httpapi.Operations{local}
+		for _, tenant := range opts.Tenants {
+			all = append(all, tenant)
+		}
+		monitor, err = observatory.New("local", localObservatory(all))
+		if err != nil {
+			return err
+		}
+		opts.Observatory = monitor
+		api, err = httpapi.New(local, opts)
 	}
 	if err != nil {
 		return err
 	}
+	observeCtx, observeCancel := context.WithCancel(base)
+	observeDone := make(chan struct{})
+	go func() { defer close(observeDone); monitor.Run(observeCtx) }()
+	defer func() { observeCancel(); <-observeDone }()
 
 	handler := &trackedHandler{next: api}
 	server := &http.Server{Addr: net.JoinHostPort(c.Host, strconv.Itoa(c.Port)), Handler: handler, ErrorLog: log.New(transportLogWriter{}, "", 0),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: c.RequestTimeout, WriteTimeout: c.RequestTimeout + 10*time.Second,
-		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return base }}
+		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return base }, ConnState: monitor.ConnState}
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	result := make(chan error, 1)

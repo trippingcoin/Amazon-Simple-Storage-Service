@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Triple-S · Observatory</title>
+    <link rel="stylesheet" href="/-/observatory/style.css" />
+    <script defer src="/-/observatory/app.js"></script>
+  </head>
+  <body>
+    <main id="observatory">
+      <header class="header">
+        <div>
+          <div class="eyebrow">Triple-S / Infrastructure</div>
+          <h1>Observatory<span class="title-dot">.</span></h1>
+        </div>
+        <div class="connection" id="connection" role="status">
+          Не подключено
+        </div>
+      </header>
+      <section class="access" aria-labelledby="access-title">
+        <div>
+          <h2 id="access-title">Подключение к вашему серверу</h2>
+          <p>Токен администратора хранится только в памяти этой вкладки.</p>
+        </div>
+        <form id="login">
+          <label for="token">Admin Bearer token</label>
+          <div class="input-row">
+            <input
+              id="token"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              required
+              minlength="32"
+              placeholder="Вставьте токен администратора"
+            /><button type="submit" id="connect">Подключиться</button>
+          </div>
+        </form>
+        <div class="session" id="session" hidden>
+          <span>Авторизация администратора</span
+          ><button type="button" class="secondary" id="disconnect">
+            Отключиться
+          </button>
+        </div>
+      </section>
+      <div id="notice" class="notice" role="status">
+        Ожидание подключения. Здесь появятся данные работающего сервера.
+      </div>
+      <section class="metrics" aria-label="Текущие показатели">
+        <div>
+          <span>API requests / sec</span><strong id="rps">—</strong
+          ><small>скользящее окно до 10 s</small>
+        </div>
+        <div>
+          <span>Latency · mean</span><strong id="latency">—</strong
+          ><small>завершённые HTTP-запросы</small>
+        </div>
+        <div>
+          <span>Active connections</span><strong id="connections">—</strong
+          ><small id="inflight">TCP, включая keep-alive</small>
+        </div>
+        <div>
+          <span>Storage usage</span><strong id="usage">—</strong
+          ><small id="objects">опубликованные логические байты</small>
+        </div>
+        <div>
+          <span>API replicas</span><strong id="replicas">—</strong
+          ><small id="heartbeat">heartbeat каждые 5 s</small>
+        </div>
+      </section>
+      <section class="topology-section" aria-labelledby="topology-title">
+        <div class="section-title">
+          <div>
+            <h2 id="topology-title">Поток данных</h2>
+            <span id="mode" class="subtle">Реальная топология сервера</span>
+          </div>
+          <button type="button" class="secondary" id="pause" disabled>
+            Пауза
+          </button>
+        </div>
+        <div class="topology" id="topology">
+          <svg id="edges" aria-hidden="true">
+            <g id="wires"></g>
+            <g id="particles"></g>
+          </svg>
+          <div class="lane clients">
+            <span class="lane-label">S3 API clients</span
+            ><button
+              type="button"
+              class="component"
+              id="client"
+              data-key="client"
+            >
+              <span class="component-type">ENTRY</span><strong>Clients</strong
+              ><small>PUT · GET · DELETE</small
+              ><span class="state">Нет данных</span>
+            </button>
+          </div>
+          <div class="lane ingress">
+            <span class="lane-label">Ingress</span
+            ><button
+              type="button"
+              class="component"
+              id="gateway"
+              data-key="gateway"
+            >
+              <span class="component-type">ROUTING</span
+              ><strong>API endpoint</strong><small>Балансировщик / direct</small
+              ><span class="state">Не наблюдается</span>
+            </button>
+          </div>
+          <div class="lane replicas-lane">
+            <span class="lane-label">Application replicas</span>
+            <div id="nodes" class="nodes">
+              <div class="empty">Нет подключённых реплик</div>
+            </div>
+          </div>
+          <div class="lane dependencies">
+            <span class="lane-label">Shared dependencies</span
+            ><button
+              type="button"
+              class="component metadata"
+              id="database"
+              data-key="database"
+            >
+              <span class="component-type">METADATA + ACL</span
+              ><strong>PostgreSQL</strong
+              ><small>bucket · key · version · grants</small
+              ><span class="state">Нет данных</span></button
+            ><button
+              type="button"
+              class="component object-store"
+              id="storage"
+              data-key="storage"
+            >
+              <span class="component-type">OBJECT DATA</span
+              ><strong>S3 / MinIO</strong><small>Immutable blobs</small
+              ><span class="state">Нет данных</span></button
+            ><button
+              type="button"
+              class="component backup"
+              id="backup"
+              data-key="backup"
+            >
+              <span class="component-type">BACKUP</span
+              ><strong>Backup storage</strong
+              ><small>Источник не подключён</small
+              ><span class="state">Не наблюдается</span>
+            </button>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i class="blue"></i>HTTP-запросы</span
+          ><span><i class="green"></i>Доступен</span
+          ><span><i class="red"></i>Ошибка / нет heartbeat</span
+          ><span><i class="purple"></i>Metadata</span
+          ><span><i class="yellow"></i>Ожидание / GC</span>
+        </div>
+        <p class="selected" id="detail">
+          Выберите компонент для подробностей. Анимация основана на завершённых
+          HTTP-операциях; внутренние шаги не трассируются.
+        </p>
+      </section>
+      <section class="lower">
+        <div class="activity">
+          <div class="section-title">
+            <h2>Последние операции</h2>
+            <span class="subtle">выборка · без имён файлов</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Время</th>
+                  <th>Реплика / операция</th>
+                  <th>Статус</th>
+                  <th>Время, ms</th>
+                </tr>
+              </thead>
+              <tbody id="events">
+                <tr>
+                  <td colspan="4" class="empty">Ожидание реальных запросов</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <aside class="storage-state">
+          <h2>Состояние хранения</h2>
+          <dl>
+            <div>
+              <dt>Pending uploads</dt>
+              <dd id="pending">—</dd>
+            </div>
+            <div>
+              <dt>Retired blobs</dt>
+              <dd id="retired">—</dd>
+            </div>
+            <div>
+              <dt>GC deleting</dt>
+              <dd id="deleting">—</dd>
+            </div>
+            <div>
+              <dt>Replication status</dt>
+              <dd id="replication">Не наблюдается</dd>
+            </div>
+            <div>
+              <dt>Backup status</dt>
+              <dd>Источник не подключён</dd>
+            </div>
+          </dl>
+          <p>
+            S3 управляет своими внутренними репликами. Отдельные API-реплики не
+            копируют объекты друг другу.
+          </p>
+        </aside>
+      </section>
+      <footer>
+        <span id="updated">Данные ещё не получены</span
+        ><span>Admin-only telemetry · same origin</span>
+      </footer>
+    </main>
+  </body>
+</html>

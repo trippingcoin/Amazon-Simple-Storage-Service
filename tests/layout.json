@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "groups": {
+    "api": ".",
+    "integration": ".",
+    "cluster": ".",
+    "stress": ".",
+    "benchmarks/storage": "internal/storage",
+    "unit/access": "internal/access",
+    "unit/backup": "internal/backup",
+    "unit/backup_cli": "cmd/triple-s-backup",
+    "unit/cluster": "internal/cluster",
+    "unit/config": "internal/config",
+    "unit/httpapi": "internal/httpapi",
+    "unit/observatory": "internal/observatory",
+    "unit/runner": "tests",
+    "unit/service": "internal/service",
+    "unit/storage": "internal/storage"
+  }
+}

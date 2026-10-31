@@ -8,3 +8,4 @@ data
 users.json
 *.tar
 *.log
+/tests/

@@ -174,6 +174,9 @@ func Initialize(ctx context.Context, c Config, limits objectstore.Limits, users 
 	if _, e = tx.Exec(ctx, schema); e != nil {
 		return e
 	}
+	if _, e = tx.Exec(ctx, observatorySchema); e != nil {
+		return e
+	}
 	prefix, e := randomID()
 	if e != nil {
 		return e

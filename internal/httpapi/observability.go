@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"A3S/internal/observatory"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -62,6 +63,9 @@ func (b *countedBody) Read(p []byte) (int, error) {
 
 // All labels come from fixed vocabularies, not names, URLs, headers or errors.
 func operation(r *http.Request) string {
+	if r.URL.Path == "/-/observatory/state" {
+		return "observatory"
+	}
 	if r.URL.Path == "/-/usage" {
 		return "usage"
 	}
@@ -115,6 +119,7 @@ type histogram struct {
 var durationBounds = [9]float64{.005, .01, .05, .1, .5, 1, 5, 30, 120}
 
 type telemetry struct {
+	observer                   *observatory.Monitor
 	mu                         sync.Mutex
 	requests                   map[metricKey]uint64
 	durations                  map[string]histogram
@@ -127,6 +132,9 @@ func newTelemetry() *telemetry {
 }
 func (m *telemetry) wrap(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if observatoryAsset(w, r) {
+			return
+		}
 		start := time.Now()
 		var random [16]byte
 		_, _ = rand.Read(random[:])
@@ -139,7 +147,10 @@ func (m *telemetry) wrap(next http.Handler, logger *slog.Logger) http.Handler {
 			r.Body = body
 		}
 		op := operation(r)
-		tracked := op != "metrics"
+		tracked := op != "metrics" && op != "observatory"
+		if tracked && m.observer != nil {
+			m.observer.Begin()
+		}
 		if tracked {
 			m.mu.Lock()
 			m.inflight++
@@ -171,6 +182,9 @@ func (m *telemetry) wrap(next http.Handler, logger *slog.Logger) http.Handler {
 				op = "unauthorized"
 			}
 			elapsed := time.Since(start).Seconds()
+			if tracked && m.observer != nil {
+				m.observer.Finish(observatory.Event{RequestID: id, Operation: op, Status: status, Outcome: outcome, DurationMS: elapsed * 1000, RequestBytes: body.bytes, ResponseBytes: rw.bytes})
+			}
 			if tracked || status == 401 {
 				m.mu.Lock()
 				if tracked {

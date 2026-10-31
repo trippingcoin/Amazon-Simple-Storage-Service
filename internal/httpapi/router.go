@@ -4,6 +4,7 @@ package httpapi
 import (
 	"A3S/internal/access"
 	"A3S/internal/objectstore"
+	"A3S/internal/observatory"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -29,6 +30,7 @@ type Operations interface {
 	DeleteObject(context.Context, string, string) error
 }
 type Options struct {
+	Observatory                                  *observatory.Monitor
 	Authority                                    Authority
 	Logger                                       *slog.Logger
 	Token                                        string
@@ -87,6 +89,7 @@ func New(s Operations, opts Options) (http.Handler, error) {
 		downloads = make(chan struct{}, opts.MaxConcurrentDownloads)
 	}
 	metrics := newTelemetry()
+	metrics.observer = opts.Observatory
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -151,6 +154,14 @@ func New(s Operations, opts Options) (http.Handler, error) {
 		if len(r.Header.Values("Authorization")) != 1 || !strings.HasPrefix(auth, "Bearer ") || !authenticated {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="triple-s"`)
 			writeXMLError(w, "Authentication required", http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/-/observatory/state" {
+			if principal.Role != "admin" {
+				writeXMLError(w, "Access denied", http.StatusForbidden)
+				return
+			}
+			observatoryState(w, r, opts.Observatory)
 			return
 		}
 		mux := legacy

@@ -17,7 +17,7 @@ import (
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: triple-s-cluster init|sync-users|gc|ready|provision-local|import-local|verify")
+		return errors.New("usage: triple-s-cluster init|sync-users|gc|ready|provision-local|import-local|verify|enable-observatory")
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var usersFile, source string
@@ -35,7 +35,7 @@ func run(ctx context.Context, args []string) error {
 		flags.StringVar(&source, "dir", "", "Stopped local storage to import without overwrites")
 	case "gc":
 		flags.IntVar(&batch, "limit", 100, "Maximum blobs per run, retained for at least 48h")
-	case "ready", "provision-local", "verify":
+	case "ready", "provision-local", "verify", "enable-observatory":
 	default:
 		return errors.New("unknown cluster command")
 	}
@@ -73,6 +73,9 @@ func run(ctx context.Context, args []string) error {
 		return e
 	}
 	defer s.Close()
+	if args[0] == "enable-observatory" {
+		return s.EnableObservatory(ctx)
+	}
 	if args[0] == "verify" {
 		report, e := s.Verify(ctx)
 		if e != nil {
